@@ -12,7 +12,7 @@ s3 = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 rekognition = boto3.client('rekognition')
 
-table_name = os.getenv("table")
+table_name = os.getenv("DYNAMO_TABLE")
 if not table_name:
     logger.error("Environment variable 'table' not set!")
     table = None
