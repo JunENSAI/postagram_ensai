@@ -15,13 +15,13 @@ from cdktf_cdktf_provider_aws.data_aws_caller_identity import DataAwsCallerIdent
 import base64
 
 # Mettez ici le nom du bucket S3 crée dans la partie serverless
-bucket=""
+bucket="my-cdtf-test-bucket20250502165546728300000001"
 
 # Mettez ici le nom de la table dynamoDB créée dans la partie serverless
-dynamo_table=""
+dynamo_table="MyDynamoDB"
 
 # Mettez ici l'url de votre dépôt github. Votre dépôt doit être public !!!
-your_repo=""
+your_repo="https://github.com/JunENSAI/postagram_ensai.git"
 
 # Le user data pour lancer votre websservice. Il fonctionne tel quel
 user_data= base64.b64encode(f"""#!/bin/bash

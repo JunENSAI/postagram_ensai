@@ -21,7 +21,7 @@ class ServerlessStack(TerraformStack):
         
         bucket = S3Bucket(
             self, "bucket",
-            bucket_prefix=""
+            bucket_prefix="my-cdtf-test-bucket"
         )
 
         # NE PAS TOUCHER !!!!
@@ -34,33 +34,50 @@ class ServerlessStack(TerraformStack):
                 allowed_origins = ["*"]
             )]
             )
-
         dynamo_table = DynamodbTable(
             self, "DynamodDB-table",
-            name= "",
-            hash_key="",
-            range_key="",
+            name= "MyDynamoDB",
+            hash_key="user",
+            range_key="id",
             attribute=[
-                DynamodbTableAttribute(name="",type="S" ),
-                DynamodbTableAttribute(name="",type="S" ),
+                DynamodbTableAttribute(name="user",type="S" ),
+                DynamodbTableAttribute(name="id",type="S" ),
             ],
             billing_mode="PROVISIONED",
             read_capacity=5,
             write_capacity=5
         )
+        TerraformOutput(
+            self, "table_name_output",
+            value=dynamo_table.name,
+            description="Name of the DynamoDB table"
+        )
 
-        code = TerraformAsset()
+        TerraformOutput(
+            self, "bucket_name_output",
+            value=bucket.bucket, 
+            description="Name of the S3 bucket"
+        )
+
+
+        code = TerraformAsset(
+            self, "code",
+            path="./lambda",
+            type= AssetType.ARCHIVE
+        )
 
         lambda_function = LambdaFunction(
             self, "lambda",
-            function_name="",
+            function_name="postagram-rekognition-lambda",
             runtime="python3.10",
             memory_size=128,
             timeout=60,
-            role=f"",
+            role=f"arn:aws:iam::{account_id}:role/LabRole",
             filename= code.path,
-            handler="",
-            environment={"variables":{}}
+            handler="lambda_function.lambda_handler",
+            environment={"variables":{
+                "table": dynamo_table.name
+            }}
         )
 
         # NE PAS TOUCHER !!!!
@@ -75,7 +92,7 @@ class ServerlessStack(TerraformStack):
             depends_on=[lambda_function, bucket]
         )
 
-        # NE PAS TOUCHER !!!!
+        #NE PAS TOUCHER !!!!
         notification = S3BucketNotification(
             self, "notification",
             lambda_function=[S3BucketNotificationLambdaFunction(
