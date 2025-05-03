@@ -1,207 +1,210 @@
 import { Badge, Card, Col, ListGroup, CloseButton, Button, ProgressBar } from "react-bootstrap";
 import React, { useEffect, useState } from 'react';
-import { getToken } from "../App" // Assure-toi que App.js exporte getToken
+import { getToken } from "../App";
 import axios from 'axios';
 
-// Assure-toi que axios est configuré avec la bonne baseURL si nécessaire
-// axios.defaults.baseURL = 'http://tf-lb-tes...com'; // ou http://localhost:8080 pour test local
 
 function Post({ post, removePost, updatePost }) {
     const [showCard, setShowCard] = useState(true);
     const [attachment, setAttachment] = useState(null);
-    // const [image, setImage] = useState(null); // image n'est plus un état local, vient des props
-    const [labeling, setLabeling] = useState(false); // Initialisé à false
-    const [uploading, setUploading] = useState(false); // Ajout pour gérer l'état d'upload
+    const [isUploading, setIsUploading] = useState(false);
+    const [isLabeling, setIsLabeling] = useState(false);
 
-    const fileChanged = (e) => {
+    const handleFileChange = (e) => {
         const files = e.target.files || e.dataTransfer.files;
-        if (!files.length) return;
-        console.log("File selected:", files[0]);
-        setAttachment(files[0]);
-    }
-
-    const getSignedUrlPut = async (postIdForUrl) => { // Renommé pour éviter conflit
-        console.log("Getting signed URL for postId:", postIdForUrl);
-        if (!attachment) {
-             console.error("No attachment selected for getSignedUrlPut");
-             return null;
+        if (files && files.length > 0) {
+            console.log("File selected:", files[0]);
+            setAttachment(files[0]);
+        } else {
+            setAttachment(null);
         }
-        console.log("Attachment details:", attachment.name, attachment.type);
+    };
+
+    const getSignedUrlForUpload = async () => {
+        if (!attachment) {
+            console.error("No attachment selected.");
+            return null;
+        }
+        const postId = post.id;
+        if (!postId) {
+            console.error("Post ID is missing.");
+            return null;
+        }
+
+        console.log(`Getting signed URL for postId: ${postId}, filename: ${attachment.name}`);
         const config = {
             headers: { Authorization: getToken() },
             params: {
                 filename: attachment.name,
                 filetype: attachment.type,
-                postId: postIdForUrl, // Utiliser l'ID SANS préfixe ici, comme attendu par getSignedUrl
+                postId: postId,
             },
         };
 
         try {
-            // ATTENTION: Assure-toi que axios utilise la bonne baseURL (LB ou localhost)
             const response = await axios.get("/signedUrlPut", config);
             console.log("Signed URL response:", response.data);
             if (response.data && response.data.uploadURL) {
-               return response.data; // Retourne tout l'objet {uploadURL, objectName}
+                return response.data;
             } else {
                 console.error("Invalid response from /signedUrlPut:", response.data);
+                alert("Error: Could not get upload URL from server.");
                 return null;
             }
         } catch (error) {
-            console.error("Error getting signed URL:", error);
-            alert("Error getting upload URL. Check console.");
+            console.error("Error getting signed URL:", error.response ? error.response.data : error.message);
+            alert(`Error getting upload URL: ${error.response ? error.response.data.message : error.message}. Check console.`);
             return null;
         }
-    }
+    };
 
-    const submitFile = async () => {
-        if (!attachment) {
-            alert("Please select a file to upload.");
-            return;
-        }
-        // On suppose que post.id VIENT de l'API avec le préfixe POST#
-        // getSignedUrl attend l'ID SANS préfixe
-        const postIdWithoutPrefix = post.id.includes("#") ? post.id.split("#")[1] : post.id;
-        if (!postIdWithoutPrefix) {
-            console.error("Could not extract post ID without prefix from:", post.id);
-            alert("Error processing post ID.");
-            return;
-        }
-
-        setUploading(true); // Indique le début de l'upload
-
-        const signedUrlData = await getSignedUrlPut(postIdWithoutPrefix);
-
-        if (!signedUrlData || !signedUrlData.uploadURL) {
-            setUploading(false); // Arrête l'indicateur d'upload en cas d'erreur
-            return; // Erreur déjà gérée dans getSignedUrlPut
-        }
-
-        const uploadUrl = signedUrlData.uploadURL;
+    const uploadFileToS3 = async (uploadUrl) => {
+        if (!attachment) return false;
 
         const config = {
             headers: { "Content-Type": attachment.type },
         };
-        console.log(`Uploading to S3: ${uploadUrl}`);
+        console.log(`Uploading ${attachment.name} to S3...`);
 
-        var instance = axios.create();
-        // IMPORTANT: Pas besoin de supprimer l'Authorization pour les URL pré-signées PUT S3 standard
-        // delete instance.defaults.headers.common['Authorization'];
-
+        const s3AxiosInstance = axios.create();
         try {
-            const res = await instance.put(uploadUrl, attachment, config);
-            console.log("S3 Upload Status:", res.status); // HTTP status (devrait être 200)
-
-            if (res.status === 200) {
-                // L'upload S3 a réussi, on peut déclencher la mise à jour et le spinner de labellisation
-                setLabeling(true); // Démarre l'indicateur de labellisation
-                // Attendre un peu pour que la Lambda ait une chance de s'exécuter
-                // Idéalement, il faudrait un mécanisme de notification (ex: WebSocket)
-                // ou un rafraîchissement périodique plus intelligent.
-                setTimeout(() => {
-                    setLabeling(false); // Arrête l'indicateur
-                    updatePost(); // Rafraîchit les données du post (qui devraient maintenant avoir image/labels)
-                }, 5000); // Augmenté à 5 secondes pour laisser le temps à la Lambda
-            } else {
-                 alert(`Upload failed with status: ${res.status}`);
-                 setLabeling(false);
-            }
+            const res = await s3AxiosInstance.put(uploadUrl, attachment, config);
+            console.log("S3 Upload Status:", res.status);
+            return res.status === 200;
         } catch (error) {
             console.error("Error uploading file to S3:", error);
-            alert("Error uploading file. Check console.");
-            setLabeling(false); // Assure-toi d'arrêter l'indicateur en cas d'erreur
-        } finally {
-             setUploading(false); // Arrête l'indicateur d'upload
+            alert("Error uploading file to storage. Check console.");
+            return false;
         }
-    }
+    };
 
-    const deletePost = async () => {
-        // On suppose que post.id VIENT de l'API avec le préfixe POST#
-        const idWithoutPrefix = post.id.includes("#") ? post.id.split("#")[1] : post.id;
-         if (!idWithoutPrefix) {
-            console.error("Could not extract post ID without prefix from:", post.id);
-            alert("Error processing post ID for deletion.");
+    const handleSubmitFile = async () => {
+        setIsUploading(true);
+        setIsLabeling(false);
+
+        const signedUrlData = await getSignedUrlForUpload();
+        if (!signedUrlData) {
+            setIsUploading(false);
             return;
         }
-        console.log(`Attempting to delete post with ID (no prefix): ${idWithoutPrefix}`);
+
+        const uploadSuccess = await uploadFileToS3(signedUrlData.uploadURL);
+
+        setIsUploading(false);
+
+        if (uploadSuccess) {
+            console.log("Upload successful. Waiting for labeling...");
+            setIsLabeling(true);
+            setTimeout(() => {
+                setIsLabeling(false);
+                updatePost();
+            }, 5000); 
+        }
+    };
+
+    const handleDeletePost = async () => {
+        // post.id est maintenant SANS préfixe
+        const idToDelete = post.id;
+        if (!idToDelete) {
+            console.error("Cannot delete post: ID is missing.");
+            alert("Error: Cannot delete post due to missing ID.");
+            return;
+        }
+
+        const confirmDelete = window.confirm(`Are you sure you want to delete post "${post.title}"?`);
+        if (!confirmDelete) {
+            return;
+        }
+
+        console.log(`Attempting to delete post with ID: ${idToDelete}`);
         try {
-            // ATTENTION: Assure-toi que axios utilise la bonne baseURL (LB ou localhost)
-            const res = await axios.delete(`/posts/${idWithoutPrefix}`, { headers: { Authorization: getToken() } });
+            const res = await axios.delete(`/posts/${idToDelete}`, { headers: { Authorization: getToken() } });
             console.log("Delete successful:", res.data);
-            setShowCard(false); // Masque la carte après suppression réussie
-            // removePost(post.id); // Appelle la fonction du parent si nécessaire pour MAJ la liste globale
+            setShowCard(false);
+            if (removePost) {
+                removePost(post.id);
+            }
         } catch (error) {
             console.error('Error deleting post:', error.response ? error.response.data : error.message);
             alert(`Error deleting post: ${error.response ? error.response.data.message : error.message}`);
         }
     };
 
-    // Détermine si l'image existe déjà (basé sur la clé S3 stockée)
-    // Note: On utilise image_s3_key car c'est ce qui est stocké dans DynamoDB par la lambda
-    const imageExists = !!post.image_s3_key;
+    const hasImageAssociated = !!post.image_s3_key; 
+    const hasImageUrl = !!post.image_url;  
+    const hasLabels = post.labels && post.labels.length > 0;
 
-    return (<>
-        {showCard && (
-            <Col>
-                {/* Clé ajoutée ici, même si le parent devrait aussi en avoir une */}
-                <Card style={{ marginTop: '1rem' }} key={post.id}>
-                    <Card.Header >
-                        {post.title}
-                        <CloseButton className="float-end" onClick={deletePost} aria-label="Delete Post"/>
-                    </Card.Header>
+    return (
+        <>
+            {showCard && (
+                <Col>
+                    <Card style={{ marginTop: '1rem' }} key={post.id}>
+                        <Card.Header>
+                            {post.title}
+                            <CloseButton
+                                className="float-end"
+                                onClick={handleDeletePost}
+                                aria-label="Delete Post"
+                            />
+                        </Card.Header>
 
-                    {/* CORRECTION : Utilise post.image_url et vérifie son existence */}
-                    {post.image_url && (
-                        <Card.Img variant="top" src={post.image_url} alt={post.title} />
-                    )}
-
-                    <Card.Body>
-                        <Card.Text>
-                            {post.body}
-                        </Card.Text>
-                    </Card.Body>
-
-                    <ListGroup variant="flush">
-                        {/* Affiche les labels SI l'image existe ET qu'il y a des labels */}
-                        {(imageExists && post.labels && post.labels.length > 0) && (
-                             <ListGroup.Item>
-                                {post.labels.map((label) => (
-                                    // CORRECTION : Ajout de key={label}
-                                    <Badge key={label} bg="info" style={{ marginRight: '0.25rem' }}>
-                                        {label}
-                                    </Badge>
-                                ))}
-                            </ListGroup.Item>
+                        {hasImageUrl && (
+                            <Card.Img variant="top" src={post.image_url} alt={post.title} />
+                        )}
+                        {!hasImageUrl && hasImageAssociated && (
+                            <div style={{textAlign: 'center', padding: '1rem', background: '#eee'}}>Image processing or URL error...</div>
                         )}
 
-                        {/* Affiche le formulaire d'upload SI l'image N'EXISTE PAS ENCORE */}
-                        {!imageExists && (
-                            <ListGroup.Item>
-                                Attachment:
-                                <input type="file" onChange={fileChanged} disabled={uploading || labeling} style={{ margin: '0 0.5rem' }} />
-                                <Button
-                                    variant="primary"
-                                    onClick={submitFile}
-                                    disabled={!attachment || uploading || labeling}
-                                >
-                                    {uploading ? "Uploading..." : "Upload"}
-                                </Button>
-                                {labeling && <ProgressLabeling/>}
-                            </ListGroup.Item>
-                        )}
+                        <Card.Body>
+                            <Card.Text>
+                                {post.body}
+                            </Card.Text>
+                        </Card.Body>
 
-                         {/* Affiche 'Labeling...' si l'image existe mais pas encore les labels */}
-                         {(imageExists && (!post.labels || post.labels.length === 0)) && (
-                            <ListGroup.Item>
-                                Detecting labels... <ProgressBar animated now={100} />
-                            </ListGroup.Item>
-                         )}
+                        <ListGroup variant="flush">
+                            {hasLabels && (
+                                <ListGroup.Item>
+                                    {post.labels.map((label) => (
+                                        <Badge key={label} bg="info" style={{ marginRight: '0.25rem' }}>
+                                            {label}
+                                        </Badge>
+                                    ))}
+                                </ListGroup.Item>
+                            )}
 
-                    </ListGroup>
-                </Card>
-            </Col>
-        )}
-    </>
-    )
+                            {!hasImageAssociated && (
+                                <ListGroup.Item>
+                                    Attach Image:
+                                    <input
+                                        type="file"
+                                        onChange={handleFileChange}
+                                        disabled={isUploading || isLabeling}
+                                        style={{ margin: '0 0.5rem' }}
+                                    />
+                                    <Button
+                                        variant="primary"
+                                        onClick={handleSubmitFile}
+                                        disabled={!attachment || isUploading || isLabeling}
+                                    >
+                                        {isUploading ? "Uploading..." : "Upload"}
+                                    </Button>
+                                </ListGroup.Item>
+                            )}
+
+                            
+                            {isLabeling && (
+                                 <ListGroup.Item>
+                                    <ProgressLabeling />
+                                 </ListGroup.Item>
+                            )}
+
+
+                        </ListGroup>
+                    </Card>
+                </Col>
+            )}
+        </>
+    );
 }
 
 
@@ -226,7 +229,6 @@ function ProgressLabeling() {
       </div>
     );
   }
-  
 
 
-export default Post
+export default Post;

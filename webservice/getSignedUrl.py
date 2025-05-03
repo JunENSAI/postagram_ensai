@@ -18,24 +18,24 @@ bucket = os.getenv("BUCKET")
 s3_client = boto3.client('s3', config=boto3.session.Config(signature_version='s3v4'))
 logger = logging.getLogger("uvicorn")
 
-def getSignedUrl(filename: str,filetype: str, postId: str, user):
+def getSignedUrl(filename: str, filetype: str, postId: str, user: str, bucket: str):
 
-    filename = f'{uuid.uuid4()}{Path(filename).name}'
-    object_name = f"{user}/{postId}/{filename}"
+    unique_filename = f'{uuid.uuid4()}{Path(filename).suffix}'
+    object_name = f"{user}/{postId}/{unique_filename}"
 
     try:
         url = s3_client.generate_presigned_url(
+            ClientMethod='put_object',
             Params={
-            "Bucket": bucket,
-            "Key": object_name,
-            "ContentType": filetype
-        },
-            ClientMethod='put_object'
-        )
+                'Bucket': bucket,
+                'Key': object_name,
+                'ContentType': filetype
+                },
+            ExpiresIn=3600
+            )
     except ClientError as e:
         logging.error(e)
-
-
+    
     logger.info(f'Url: {url}')
     return {
             "uploadURL": url,

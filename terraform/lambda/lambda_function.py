@@ -15,7 +15,7 @@ rekognition_client = boto3.client('rekognition')
 dynamodb = boto3.resource('dynamodb')
 
 table = None
-table_name = os.getenv("DYNAMO_TABLE")
+table_name = os.getenv("DYNAMO_TABLE") # Lecture de la variable d'environnement
 if not table_name:
     logger.critical("CRITICAL ERROR: Environment variable 'DYNAMO_TABLE' not set!")
 else:
@@ -58,22 +58,17 @@ def lambda_handler(event, context):
             logger.info(f"Extracted from key: user='{user_from_key}', post_id='{post_id_from_key}'")
 
             # --- Appel Rekognition ---
+            # ... (code Rekognition inchangé) ...
             logger.info(f"Calling Rekognition for bucket='{bucket_name}', key='{key}'")
             try:
                 label_data = rekognition_client.detect_labels(
-                    Image={
-                        "S3Object": {
-                            "Bucket": bucket_name,
-                            "Name": key
-                        }
-                    },
-                    MaxLabels=5,
-                    MinConfidence=75
+                    Image={"S3Object": {"Bucket": bucket_name,"Name": key}},
+                    MaxLabels=5, MinConfidence=75
                 )
                 logger.debug(f"Rekognition raw response keys: {label_data.keys()}")
             except ClientError as e:
-                logger.error(f"Rekognition ClientError for key '{key}': {e}", exc_info=True)
-                continue
+                 logger.error(f"Rekognition ClientError for key '{key}': {e}", exc_info=True)
+                 continue
             except Exception as e:
                  logger.error(f"Unexpected error calling Rekognition for key '{key}': {e}", exc_info=True)
                  continue
@@ -81,21 +76,14 @@ def lambda_handler(event, context):
             labels = [label["Name"] for label in label_data.get("Labels", [])]
             logger.info(f"Labels detected: {labels}")
 
-            # --- Préparation des clés DynamoDB AVEC préfixes ---
-            # Utilisation de noms de variables clairs ici
-            user = f"USER#{user_from_key}"
-            post_id = f"POST#{post_id_from_key}"
 
-            # --- Mise à jour DynamoDB ---
-            # Utilisation des clés préfixées dans l'appel, mais avec des noms de variables
-            # qui peuvent être jugés plus lisibles dans le contexte de la Key DynamoDB.
-            # (Tu peux même renommer user_key_for_db en user et post_id_key_for_db en id si tu préfères)
-            logger.info(f"Attempting to update DynamoDB item with Key: user='{user}', id='{post_id}'")
+            # --- Mise à jour DynamoDB SANS PREFIXES ---
+            logger.info(f"Attempting to update DynamoDB item with Key: user='{user_from_key}', id='{post_id_from_key}'")
             try:
                 update_response = table.update_item(
                     Key={
-                        'user': user,    # Clé de partition AVEC préfixe
-                        'id': post_id     # Clé de tri AVEC préfixe
+                        'user': user_from_key,    # Utiliser la clé SANS préfixe
+                        'id': post_id_from_key     # Utiliser la clé SANS préfixe
                     },
                     UpdateExpression="SET image = :img, labels = :lbl",
                     ExpressionAttributeValues={
@@ -104,20 +92,18 @@ def lambda_handler(event, context):
                     },
                     ReturnValues="UPDATED_NEW"
                 )
-                logger.info(f"DynamoDB update successful for post '{post_id}'.")
+                logger.info(f"DynamoDB update successful for post '{post_id_from_key}'.")
 
             except ClientError as e:
+                 # ... (gestion des erreurs ClientError inchangée) ...
                  if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                     logger.error(f"DynamoDB update failed for post '{post_id}': Item does not exist or condition failed.", exc_info=True)
-                 elif e.response['Error']['Code'] == 'ResourceNotFoundException':
-                     logger.error(f"DynamoDB update failed: Table '{table_name}' not found.", exc_info=True)
-                 elif e.response['Error']['Code'] == 'ValidationException':
-                      logger.error(f"DynamoDB update failed for post '{post_id}': Validation error. Error: {e}", exc_info=True)
+                     logger.error(f"DynamoDB update failed for post '{post_id_from_key}': Item does not exist or condition failed.", exc_info=True)
+                 # ... (autres codes d'erreur) ...
                  else:
-                      logger.error(f"DynamoDB ClientError updating post '{post_id}': {e}", exc_info=True)
+                      logger.error(f"DynamoDB ClientError updating post '{post_id_from_key}': {e}", exc_info=True)
                  continue
             except Exception as e:
-                  logger.error(f"Unexpected error updating DynamoDB for post '{post_id_}': {e}", exc_info=True)
+                  logger.error(f"Unexpected error updating DynamoDB for post '{post_id_from_key}': {e}", exc_info=True)
                   continue
 
         except Exception as e:
