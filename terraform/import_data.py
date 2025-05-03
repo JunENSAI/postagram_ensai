@@ -9,7 +9,7 @@ except ImportError:
     print("Avertissement: Le fichier data.py est introuvable ou ne définit pas la variable 'data'.")
     data = []
 
-bucket = "my-cdtf-test-bucket20250502165546728300000001"
+bucket = "my-cdtf-test-bucket20250503122746679100000001"
 table_name = "MyDynamoDB"
 
 

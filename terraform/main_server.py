@@ -15,7 +15,7 @@ from cdktf_cdktf_provider_aws.data_aws_caller_identity import DataAwsCallerIdent
 import base64
 
 # Mettez ici le nom du bucket S3 crée dans la partie serverless
-bucket="my-cdtf-test-bucket20250502165546728300000001"
+bucket="my-cdtf-test-bucket20250503122746679100000001"
 
 # Mettez ici le nom de la table dynamoDB créée dans la partie serverless
 dynamo_table="MyDynamoDB"
@@ -74,7 +74,17 @@ class ServerStack(TerraformStack):
             port=80,
             protocol="HTTP" ,
             vpc_id=default_vpc.id ,
-            target_type="instance"
+            target_type="instance",
+            health_check={
+                "enabled": True,
+                "path": "/docs", # Ou un endpoint dédié /health
+                "port": "8080",
+                "protocol": "HTTP",
+                "interval": 30,
+                "timeout": 5,
+                "unhealthy_threshold": 2,
+                "matcher": "200-399" # Accepte les codes 2xx et 3xx comme sains
+            }
         )
 
         lb_listener = LbListener(
