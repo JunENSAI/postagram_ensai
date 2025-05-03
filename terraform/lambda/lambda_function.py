@@ -9,25 +9,15 @@ print('Loading function')
 logger = logging.getLogger()
 logger.setLevel("INFO")
 
-# Initialisation hors handler
 s3_client = boto3.client('s3')
-rekognition_client = boto3.client('rekognition')
+rekognition = boto3.client('rekognition')
 dynamodb = boto3.resource('dynamodb')
 
 table = None
-table_name = os.getenv("DYNAMO_TABLE") # Lecture de la variable d'environnement
-if not table_name:
-    logger.critical("CRITICAL ERROR: Environment variable 'DYNAMO_TABLE' not set!")
-else:
-    try:
-        table = dynamodb.Table(table_name)
-        logger.info(f"Successfully initialized DynamoDB table resource for: {table_name}")
-    except Exception as e:
-        logger.critical(f"CRITICAL ERROR: Failed to initialize DynamoDB table resource '{table_name}': {e}", exc_info=True)
-        # table restera None
+table_name = os.getenv("DYNAMO_TABLE")
+
 
 def lambda_handler(event, context):
-    # logger.info("Received event: " + json.dumps(event, indent=2)) # Décommenter pour debug détaillé
 
     if not table:
          logger.error("DynamoDB table resource is not initialized. Aborting.")
@@ -46,24 +36,26 @@ def lambda_handler(event, context):
             key = unquote_plus(object_key)
             logger.info(f"Processing object s3://{bucket_name}/{key}")
 
-            # --- Extraction de user et post_id SANS préfixes ---
             parts = key.split('/')
             if len(parts) < 3:
                 logger.error(f"Invalid key format: '{key}'. Expected 'user/post_id/filename'. Skipping.")
                 continue
 
-            user_from_key = parts[0]
-            post_id_from_key = parts[1]
+            user = parts[0]
+            post_id = parts[1]
 
-            logger.info(f"Extracted from key: user='{user_from_key}', post_id='{post_id_from_key}'")
+            logger.info(f"Extracted from key: user='{user}', post_id='{post_id}'")
 
-            # --- Appel Rekognition ---
-            # ... (code Rekognition inchangé) ...
             logger.info(f"Calling Rekognition for bucket='{bucket_name}', key='{key}'")
             try:
-                label_data = rekognition_client.detect_labels(
-                    Image={"S3Object": {"Bucket": bucket_name,"Name": key}},
-                    MaxLabels=5, MinConfidence=75
+                label_data = rekognition.detect_labels(
+                    Image={"S3Object": {
+                        "Bucket": bucket_name,
+                        "Name": key
+                        }
+                    },
+                    MaxLabels=5,
+                    MinConfidence=75
                 )
                 logger.debug(f"Rekognition raw response keys: {label_data.keys()}")
             except ClientError as e:
@@ -76,14 +68,12 @@ def lambda_handler(event, context):
             labels = [label["Name"] for label in label_data.get("Labels", [])]
             logger.info(f"Labels detected: {labels}")
 
-
-            # --- Mise à jour DynamoDB SANS PREFIXES ---
-            logger.info(f"Attempting to update DynamoDB item with Key: user='{user_from_key}', id='{post_id_from_key}'")
+            logger.info(f"Attempting to update DynamoDB item with Key: user='{user}', id='{post_id}'")
             try:
                 update_response = table.update_item(
                     Key={
-                        'user': user_from_key,    # Utiliser la clé SANS préfixe
-                        'id': post_id_from_key     # Utiliser la clé SANS préfixe
+                        'user': user, 
+                        'id': post_id
                     },
                     UpdateExpression="SET image = :img, labels = :lbl",
                     ExpressionAttributeValues={
@@ -92,18 +82,16 @@ def lambda_handler(event, context):
                     },
                     ReturnValues="UPDATED_NEW"
                 )
-                logger.info(f"DynamoDB update successful for post '{post_id_from_key}'.")
+                logger.info(f"DynamoDB update successful for post '{post_id}'.")
 
             except ClientError as e:
-                 # ... (gestion des erreurs ClientError inchangée) ...
                  if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-                     logger.error(f"DynamoDB update failed for post '{post_id_from_key}': Item does not exist or condition failed.", exc_info=True)
-                 # ... (autres codes d'erreur) ...
+                     logger.error(f"DynamoDB update failed for post '{post_id}': Item does not exist or condition failed.", exc_info=True)
                  else:
-                      logger.error(f"DynamoDB ClientError updating post '{post_id_from_key}': {e}", exc_info=True)
+                      logger.error(f"DynamoDB ClientError updating post '{post_id}': {e}", exc_info=True)
                  continue
             except Exception as e:
-                  logger.error(f"Unexpected error updating DynamoDB for post '{post_id_from_key}': {e}", exc_info=True)
+                  logger.error(f"Unexpected error updating DynamoDB for post '{post_id}': {e}", exc_info=True)
                   continue
 
         except Exception as e:

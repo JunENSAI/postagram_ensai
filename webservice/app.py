@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 from getSignedUrl import getSignedUrl
 
