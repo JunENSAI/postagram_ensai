@@ -50,40 +50,14 @@ my_config = Config(
     signature_version='v4',
 )
 
-try:
-    DYNAMO_TABLE_NAME = os.getenv("DYNAMO_TABLE")
-    S3_BUCKET_NAME = os.getenv("BUCKET")
-
-    if not DYNAMO_TABLE_NAME:
-        logger.critical("CRITICAL ERROR: Environment variable DYNAMO_TABLE not set!")
-        table = None
-    else:
-        dynamodb = boto3.resource('dynamodb', config=my_config)
-        table = dynamodb.Table(DYNAMO_TABLE_NAME)
-        logger.info(f"DynamoDB Table resource initialized for table: {DYNAMO_TABLE_NAME}")
-
-    if not S3_BUCKET_NAME:
-        logger.critical("CRITICAL ERROR: Environment variable BUCKET not set!")
-        bucket = None
-        s3_client = None
-    else:
-        # Correction: config s3v4 doit être dans Config, pas boto3.session.Config
-        s3_config = Config(signature_version='s3v4', region_name=my_config.region_name)
-        s3_client = boto3.client('s3', config=s3_config)
-        bucket = S3_BUCKET_NAME
-        logger.info(f"S3 Client initialized for bucket: {bucket}")
-
-except Exception as e:
-    logger.critical(f"CRITICAL ERROR during Boto3 initialization: {e}", exc_info=True)
-    table = None
-    bucket = None
-    s3_client = None
-
+dynamodb = boto3.resource('dynamodb', config=my_config)
+table = dynamodb.Table(os.getenv("DYNAMO_TABLE"))
+s3_client = boto3.client('s3', config=boto3.session.Config(signature_version='s3v4'))
+bucket = os.getenv("BUCKET")
 
 ## ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ☝️ ##
 ##                                                                                                ##
 ####################################################################################################
-
 
 def create_presigned_url(bucket_name, object_name, expiration=3600):
     """Generate a presigned URL to share an S3 object (for GET requests)"""
@@ -109,13 +83,6 @@ def create_presigned_url(bucket_name, object_name, expiration=3600):
 
 @app.post("/posts", status_code=status.HTTP_201_CREATED)
 async def post_a_post(post: Post, authorization: str | None = Header(default=None)):
-    """Poste un post SANS préfixe."""
-    if not table:
-       logger.error("POST /posts: Table not initialized")
-       return JSONResponse(status_code=500, content={"message": "Internal server error: Table not configured"})
-    if not authorization:
-        logger.error("POST /posts: Authorization header missing")
-        return JSONResponse(status_code=401, content={"message": "Authorization header required"})
 
     user = authorization
     post_id = str(uuid.uuid4())
@@ -123,7 +90,7 @@ async def post_a_post(post: Post, authorization: str | None = Header(default=Non
     logger.info(f"Creating post for user: {user}, post ID: {post_id}")
     logger.info(f"Title: {post.title}, Body: {post.body}")
 
-    item_to_create = {
+    item = {
         'user': user,
         'id': post_id,
         'title': post.title,
@@ -132,9 +99,9 @@ async def post_a_post(post: Post, authorization: str | None = Header(default=Non
         'labels': []
     }
     try:
-        res = table.put_item(Item=item_to_create)
+        res = table.put_item(Item=item)
         logger.info(f"DynamoDB put_item successful. Metadata: {res.get('ResponseMetadata')}")
-        return item_to_create
+        return item
     except ClientError as e:
         logger.error(f"DynamoDB ClientError during put_item: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"message": f"Failed to create post: {e.response['Error']['Message']}"})
@@ -148,17 +115,9 @@ async def get_all_posts(user: Union[str, None] = None):
     """Récupère les posts SANS utiliser de préfixes pour la query."""
     logger.info(f"--- GET /posts --- Received request with user parameter: '{user}'")
 
-    if not table:
-        logger.error("GET /posts: Table not initialized")
-        return JSONResponse(status_code=500, content={"message": "Internal server error: Table not configured"})
-    if not bucket:
-        logger.error("GET /posts: S3 Bucket not initialized")
-        return JSONResponse(status_code=500, content={"message": "Internal server error: Bucket not configured"})
-
     items = []
     try:
         if user:
-            # <<< QUERY SANS PREFIXE >>>
             logger.info(f"Attempting DynamoDB Query for user: '{user}'")
             response = table.query(
                 KeyConditionExpression=Key('user').eq(user) # Utilisation directe
@@ -183,27 +142,22 @@ async def get_all_posts(user: Union[str, None] = None):
         return JSONResponse(status_code=500, content={"message": "Internal server error during data retrieval"})
 
     logger.info(f"Processing {len(items)} items for response...")
-    processed_items = []
+    res = []
     for item in items:
-        processed_item = dict(item)
+        p_item = dict(item)
 
-        # Pas besoin d'enlever les préfixes car il n'y en a pas
-        # if 'user' in processed_item: processed_item['user'] = processed_item['user'].replace('USER#', '')
-        # if 'id' in processed_item: processed_item['id'] = processed_item['id'].replace('POST#', '')
-
-        image_key = processed_item.get('image') # Contient la clé S3 ou None
-        processed_item['image_url'] = None
+        image_key = p_item.get('image')
+        p_item['image_url'] = None
         if image_key and bucket and s3_client:
-             processed_item['image_url'] = create_presigned_url(bucket, image_key)
-             if not processed_item['image_url']:
+             p_item['image_url'] = create_presigned_url(bucket, image_key)
+             if not p_item['image_url']:
                  logger.warning(f"Failed to generate presigned URL for key: {image_key}")
         elif image_key:
              logger.warning(f"Cannot generate presigned URL for {image_key}, bucket or s3_client not configured.")
 
-        processed_item['image_s3_key'] = processed_item.pop('image', None) # Garde la clé s3 sous un autre nom
+        p_item['image_s3_key'] = p_item.pop('image', None)
 
-        # Nettoyage des labels (inchangé)
-        raw_labels = processed_item.get('labels', [])
+        raw_labels = p_item.get('labels', [])
         simple_labels: List[str] = []
         if isinstance(raw_labels, list):
             for label_obj in raw_labels:
@@ -212,24 +166,17 @@ async def get_all_posts(user: Union[str, None] = None):
                  elif isinstance(label_obj, str):
                       simple_labels.append(label_obj)
                  else:
-                      logger.warning(f"Item ID {processed_item.get('id', 'N/A')} contains unexpected label format: {label_obj}")
+                      logger.warning(f"Item ID {p_item.get('id', 'N/A')} contains unexpected label format: {label_obj}")
         else:
-            logger.warning(f"Item ID {processed_item.get('id', 'N/A')} has non-list format for labels: {raw_labels}")
-        processed_item['labels'] = simple_labels
+            logger.warning(f"Item ID {p_item.get('id', 'N/A')} has non-list format for labels: {raw_labels}")
+        p_item['labels'] = simple_labels
 
-        processed_items.append(processed_item)
+        res.append(p_item)
 
-    logger.info(f"--- GET /posts --- Returning {len(processed_items)} processed items for user parameter: '{user}'")
-    return processed_items
+    return res
 
 @app.delete("/posts/{post_id}")
 async def delete_post(post_id: str, authorization: str | None = Header(default=None)):
-    """Supprime un post spécifique SANS utiliser de préfixes."""
-    # ... (vérifications initiales pour table, bucket, authorization) ...
-    if not table: return JSONResponse(status_code=500, content={"message": "Internal server error: Table not configured"})
-    if not bucket or not s3_client: return JSONResponse(status_code=500, content={"message": "Internal server error: Bucket not configured"})
-    if not authorization: return JSONResponse(status_code=401, content={"message": "Authorization header required"})
-
     user = authorization
 
     logger.info(f"Attempting to delete post for user: {user}, post ID: {post_id}")
@@ -245,7 +192,7 @@ async def delete_post(post_id: str, authorization: str | None = Header(default=N
             return JSONResponse(status_code=404, content={"message": "Post not found"})
 
         image_s3_key = item_to_delete.get('image')
-        if image_s3_key:...
+        if image_s3_key:
             logger.info(f"Deleting associated image from S3 bucket '{bucket}': {image_s3_key}")
             try:
                 s3_client.delete_object(Bucket=bucket, Key=image_s3_key)
@@ -259,8 +206,8 @@ async def delete_post(post_id: str, authorization: str | None = Header(default=N
             ReturnValues='ALL_OLD'
         )
         logger.info(f"DynamoDB delete_item successful. Metadata: {delete_response.get('ResponseMetadata')}")
-        deleted_item_cleaned = dict(delete_response.get('Attributes', {}))
-        return deleted_item_cleaned
+        item = dict(delete_response.get('Attributes', {}))
+        return item
 
     except ClientError as e:
         logger.error(f"DynamoDB ClientError during delete operation for {post_id}: {e}", exc_info=True)
