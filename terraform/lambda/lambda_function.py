@@ -11,16 +11,28 @@ logger.setLevel("INFO")
 
 s3_client = boto3.client('s3')
 rekognition = boto3.client('rekognition')
-dynamodb = boto3.resource('dynamodb')
 
-table = os.getenv("DYNAMO_TABLE")
+dynamodb_resource = None
+table = None
+
+table_name = os.getenv("DYNAMO_TABLE")
+
+if table_name:
+    try:
+        dynamodb_resource = boto3.resource('dynamodb')
+        table = dynamodb_resource.Table(table_name)
+        logger.info(f"Successfully initialized DynamoDB table object for table: {table_name}")
+    except Exception as e:
+        logger.error(f"Failed to initialize DynamoDB table resource for table name '{table_name}': {e}", exc_info=True)
+else:
+    logger.error("Environment variable DYNAMO_TABLE is not set!")
 
 
 def lambda_handler(event, context):
 
     if not table:
          logger.error("DynamoDB table resource is not initialized. Aborting.")
-         return {'statusCode': 500, 'body': json.dumps('Internal server error: Table not configured')}
+         return {'statusCode': 500, 'body': json.dumps('Internal server error: Table not configured or initialization failed')}
 
     for record in event.get("Records", []):
         try:
@@ -71,7 +83,7 @@ def lambda_handler(event, context):
             try:
                 update_response = table.update_item(
                     Key={
-                        'user': user, 
+                        'user': user,
                         'id': post_id
                     },
                     UpdateExpression="SET image = :img, labels = :lbl",
@@ -81,7 +93,7 @@ def lambda_handler(event, context):
                     },
                     ReturnValues="UPDATED_NEW"
                 )
-                logger.info(f"DynamoDB update successful for post '{post_id}'.")
+                logger.info(f"DynamoDB update successful for post '{post_id}'. Updated attributes: {update_response.get('Attributes')}")
 
             except ClientError as e:
                  if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
