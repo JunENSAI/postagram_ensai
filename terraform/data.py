@@ -25,7 +25,7 @@ data = [
         "labels": []
     },
     {
-        "user": "Setsuna"
+        "user": "Setsuna",
         "id": "cf536095-f4b8-42ce-a6e9-b0be7b9e1566",
         "title": "00 Raiser Trans-AM",
         "body": "Vitesse maximale !",

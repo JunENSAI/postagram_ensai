@@ -13,8 +13,7 @@ s3_client = boto3.client('s3')
 rekognition = boto3.client('rekognition')
 dynamodb = boto3.resource('dynamodb')
 
-table = None
-table_name = os.getenv("DYNAMO_TABLE")
+table = os.getenv("DYNAMO_TABLE")
 
 
 def lambda_handler(event, context):

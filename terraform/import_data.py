@@ -3,13 +3,9 @@ from botocore.config import Config
 from os import walk
 import os 
 
-try:
-    from data import data
-except ImportError:
-    print("Avertissement: Le fichier data.py est introuvable ou ne définit pas la variable 'data'.")
-    data = []
+from data import data
 
-bucket = "my-cdtf-test-bucket20250503122746679100000001"
+bucket = "my-cdtf-test-bucket20250504105753107800000001"
 table_name = "MyDynamoDB"
 
 
